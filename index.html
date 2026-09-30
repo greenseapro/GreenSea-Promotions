@@ -1217,13 +1217,8 @@ function limitWhatsAppText(text,maxChars=1100){
 }
 
 function openWhatsAppWithText(text){
-  // Eski popup / whatsapp:// fallback'leri kasıtlı olarak kaldırıldı.
-  // Mobilde doğrudan sistem paylaşım ekranı kullanılmalıdır.
   const safeText=limitWhatsAppText(text);
-  if(navigator.share){
-    return navigator.share({title:"Tişört Siparişi",text:safeText});
-  }
-  throw new Error("Bu tarayıcı Web Share API'yi desteklemiyor.");
+  window.location.assign("https://wa.me/?text="+encodeURIComponent(safeText));
 }
 
 function shareOrder(){
@@ -1233,7 +1228,7 @@ function shareOrder(){
   if(!q||!Number.isFinite(+q)||+q<1){toast("Adet en az 1 olmalı.");return}
 
   // Bu fonksiyon doğrudan kullanıcının buton tıklamasından çağrılır.
-  // Burada await, setTimeout, window.open veya whatsapp:// yoktur.
+  // Paylaşım çağrısı doğrudan buton tıklamasından yapılır.
   const files=Array.isArray(shareFilesCache)?shareFilesCache.filter(f=>f instanceof File):[];
   const text=limitWhatsAppText(safeShareText(bs,q,note,files,files.length>0));
 
@@ -1248,10 +1243,12 @@ function shareOrder(){
         });
         return;
       }
-      // Dosya paylaşımı desteklenmiyorsa metni doğrudan sistem paylaşımına gönder.
-      navigator.share({title:"Tişört Siparişi",text:text}).catch(e=>{
-        if(e&&e.name!=="AbortError") console.warn("Metin paylaşımı başarısız:",e);
-      });
+      // Dosya paylaşımı desteklenmiyorsa WhatsApp'a doğrudan kullanıcı
+      // tıklamasıyla git. navigator.share({text}) burada kullanılmaz;
+      // bazı masaüstü tarayıcılarda WhatsApp paylaşım hedefi daha sonra
+      // Bazı tarayıcılar sistem paylaşım hedefinde ikinci bir yönlendirmeyi engelleyebilir.
+      const waUrl="https://wa.me/?text="+encodeURIComponent(text);
+      window.location.assign(waUrl);
       return;
     }catch(e){
       console.warn("Web Share kullanılamadı:",e);
