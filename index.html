@@ -1052,12 +1052,19 @@ function driveId(value){
 }
 function catalogCandidates(value){
   const id=driveId(value);
-  return [
+  const direct=[
     "https://drive.usercontent.google.com/download?id="+encodeURIComponent(id)+"&export=view",
     "https://drive.usercontent.google.com/download?id="+encodeURIComponent(id)+"&export=download",
     "https://drive.google.com/thumbnail?id="+encodeURIComponent(id)+"&sz=w2000",
     "https://lh3.googleusercontent.com/d/"+encodeURIComponent(id)+"=w2000"
   ];
+  // GitHub Pages cannot read Google Drive pixels into a canvas because Drive
+  // does not send Access-Control-Allow-Origin. The proxy is only used by the
+  // canvas/share path; normal catalog previews keep using the direct URLs.
+  const proxy=direct.map(u=>
+    "https://images.weserv.nl/?url="+encodeURIComponent(u)
+  );
+  return direct.concat(proxy);
 }
 function catalogUrl(value){return catalogCandidates(value)[0]}
 function catalogDownloadUrl(value){return catalogCandidates(value)[1]}
@@ -1132,6 +1139,10 @@ $("templateInput").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=
 
 let shareFilesCache=null;
 let sharePrepToken=0;
+function blobFile(blob,name){
+  if(!(blob instanceof Blob)) throw new Error("Geçersiz görsel verisi.");
+  return new File([blob],name,{type:blob.type||"image/png",lastModified:Date.now()});
+}
 function storageGet(key){try{return localStorage.getItem(key)||""}catch(_){return ""}}
 function storageSet(key,value){try{localStorage.setItem(key,value)}catch(_){} }
 function unicodeChar(cp){return String.fromCodePoint(cp)}
@@ -1165,8 +1176,11 @@ function loadImageForCanvas(src){
 
 async function loadCatalogImageForCanvas(value){
   const candidates=catalogCandidates(value);
+  // Prefer the CORS proxy for canvas pixels. Direct Drive URLs are retained
+  // as a fallback because some environments may already allow them.
+  const ordered=[...candidates.slice(4),...candidates.slice(0,4)];
   let lastError=null;
-  for(const src of candidates){
+  for(const src of ordered){
     try{return await loadImageForCanvas(src)}catch(e){lastError=e}
   }
   throw lastError||new Error('Katalog görseli yüklenemedi.');
@@ -1227,42 +1241,26 @@ function shareOrder(){
   const note=String($("ordNote").value||"").trim().slice(0,300);
   if(!q||!Number.isFinite(+q)||+q<1){toast("Adet en az 1 olmalı.");return}
 
-  // Bu fonksiyon doğrudan kullanıcının buton tıklamasından çağrılır.
-  // Paylaşım çağrısı doğrudan buton tıklamasından yapılır.
+  // This function is called directly by the button click. Do not await,
+  // delay, or open a second window before invoking the native share sheet.
   const files=Array.isArray(shareFilesCache)?shareFilesCache.filter(f=>f instanceof File):[];
   const text=limitWhatsAppText(safeShareText(bs,q,note,files,files.length>0));
 
-  if(navigator.share){
+  if(files.length && navigator.share && navigator.canShare){
     try{
-      if(files.length && navigator.canShare && navigator.canShare({files})){
-        // iPhone/Android: görselleri doğrudan sistem paylaşım ekranına gönder.
-        navigator.share({title:"Tişört Tasarımı",files:files}).then(()=>{
-          toast("Paylaşım ekranından WhatsApp'ı seçebilirsin.");
-        }).catch(e=>{
-          if(e&&e.name!=="AbortError") console.warn("Görsel paylaşımı başarısız:",e);
-        });
+      if(navigator.canShare({files})){
+        navigator.share({title:"Tişört Tasarımı",text,files});
         return;
       }
-      // Dosya paylaşımı desteklenmiyorsa WhatsApp'a doğrudan kullanıcı
-      // tıklamasıyla git. navigator.share({text}) burada kullanılmaz;
-      // bazı masaüstü tarayıcılarda WhatsApp paylaşım hedefi daha sonra
-      // Bazı tarayıcılar sistem paylaşım hedefinde ikinci bir yönlendirmeyi engelleyebilir.
-      const waUrl="https://wa.me/?text="+encodeURIComponent(text);
-      window.location.assign(waUrl);
-      return;
     }catch(e){
-      console.warn("Web Share kullanılamadı:",e);
+      console.warn("Görsel paylaşımı başlatılamadı:",e);
     }
   }
 
-  // Web Share olmayan masaüstü tarayıcıda sadece panoya kopyala.
-  // WhatsApp popup'ı açmaya çalışma; popup/user-gesture hatası üretme.
-  try{
-    navigator.clipboard?.writeText(text);
-    toast("Sipariş metni panoya kopyalandı. WhatsApp'ı açıp yapıştırabilirsin.");
-  }catch(e){
-    toast("Bu tarayıcı paylaşımı desteklemiyor.");
-  }
+  // No file share support (or no generated image): go directly to WhatsApp
+  // from this exact user gesture. There is deliberately no navigator.share({text})
+  // fallback because browsers may route that through a delayed WhatsApp handler.
+  window.location.assign("https://wa.me/?text="+encodeURIComponent(text));
 }
 
 function openOrder(){
@@ -1281,27 +1279,28 @@ function openOrder(){
 }
 
 async function prepareShareFiles(token){
-  try{
-    const files=[];
-    const fronts=await renderSide("front");
-    const backs=await renderSide("back");
-    if(fronts.has&&fronts.blob)files.push(await blobFile(fronts.blob,"tisort_on.png"));
-    if(backs.has&&backs.blob)files.push(await blobFile(backs.blob,"tisort_arka.png"));
-    if(token!==sharePrepToken)return;
-    shareFilesCache=files;
-    const st=$("shareStatus"),btn=$("shareBtn");
-    if(st)st.textContent=files.length
-      ? `${files.length} tasarım görseli hazır.`
-      : "Tasarım görseli oluşturulamadı; yalnızca sipariş metni paylaşılacak.";
-    if(btn){btn.disabled=false;btn.textContent="WHATSAPP'TA PAYLAŞ"}
-  }catch(e){
-    console.warn("Tasarım görselleri hazırlanamadı.",e);
-    if(token!==sharePrepToken)return;
-    shareFilesCache=[];
-    const st=$("shareStatus"),btn=$("shareBtn");
-    if(st)st.textContent="Görseller hazırlanamadı; yalnızca sipariş metni paylaşılabilir.";
-    if(btn){btn.disabled=false;btn.textContent="WHATSAPP'TA PAYLAŞ"}
+  const files=[];
+  const failures=[];
+  for(const sideName of ["front","back"]){
+    try{
+      const result=await renderSide(sideName);
+      if(result.has&&result.blob){
+        files.push(blobFile(result.blob,sideName==="front"?"tisort_on.png":"tisort_arka.png"));
+      }
+    }catch(e){
+      failures.push(sideName+": "+(e?.message||e));
+      console.warn(""+sideName+" görseli hazırlanamadı:",e);
+    }
   }
+  if(token!==sharePrepToken)return;
+  shareFilesCache=files;
+  const st=$("shareStatus"),btn=$("shareBtn");
+  if(st){
+    if(files.length===2) st.textContent="2 tasarım görseli hazır.";
+    else if(files.length===1) st.textContent="1 tasarım görseli hazır. WhatsApp'ta paylaşılabilir.";
+    else st.textContent="Görseller hazırlanamadı; yalnızca sipariş metni paylaşılabilir.";
+  }
+  if(btn){btn.disabled=false;btn.textContent="WHATSAPP'TA PAYLAŞ"}
 }
 async function renderSide(s){
  const list=layers[s];
