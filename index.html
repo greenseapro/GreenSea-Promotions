@@ -1138,8 +1138,10 @@ async function addCatalogItem(code){
 $("templateInput").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{addImageData(rd.result,"Şablon");closeDialog()};rd.readAsDataURL(f);e.target.value=""}
 
 let shareFilesCache=null;
+let shareCardFile=null;
 let sharePrepToken=0;
-function storageGet(key){try{return localStorage.getItem(key)||""}catch(_){return ""}}
+let shareCardToken=0;
+function storageGet(key){try{return localStorage.getItem(key)||""}catch(_) {return ""}}
 function storageSet(key,value){try{localStorage.setItem(key,value)}catch(_){} }
 function unicodeChar(cp){return String.fromCodePoint(cp)}
 function colorName(c){
@@ -1163,7 +1165,6 @@ function loadImageForCanvas(src){
     im.onerror=()=>finish(false,new Error('Görsel yüklenemedi: '+String(src).slice(0,120)));
     const value=String(src||'').trim();
     if(!value)return finish(false,new Error('Görsel kaynağı boş.'));
-    // Data/blob URLs do not need CORS. External catalog images do.
     if(/^https?:\/\//i.test(value)) im.crossOrigin='anonymous';
     im.referrerPolicy='no-referrer';
     im.src=value;
@@ -1172,8 +1173,6 @@ function loadImageForCanvas(src){
 
 async function loadCatalogImageForCanvas(value){
   const candidates=catalogCandidates(value);
-  // Prefer the CORS proxy for canvas pixels. Direct Drive URLs are retained
-  // as a fallback because some environments may already allow them.
   const ordered=[...candidates.slice(4),...candidates.slice(0,4)];
   let lastError=null;
   for(const src of ordered){
@@ -1182,16 +1181,8 @@ async function loadCatalogImageForCanvas(value){
   throw lastError||new Error('Katalog görseli yüklenemedi.');
 }
 
-function safeShareText(bs,q,note,files,canFileShare){
-  const E={
-    clipboard:unicodeChar(0x1F4CB),
-    shirt:unicodeChar(0x1F455),
-    number:unicodeChar(0x1F522),
-    art:unicodeChar(0x1F3A8),
-    pin:unicodeChar(0x1F4CD),
-    tag:unicodeChar(0x1F3F7)+unicodeChar(0xFE0F),
-    image:unicodeChar(0x1F5BC)+unicodeChar(0xFE0F)
-  };
+function safeShareText(bs,q,note){
+  const E={clipboard:unicodeChar(0x1F4CB),shirt:unicodeChar(0x1F455),number:unicodeChar(0x1F522),art:unicodeChar(0x1F3A8),pin:unicodeChar(0x1F4CD),tag:unicodeChar(0x1F3F7)+unicodeChar(0xFE0F),note:unicodeChar(0x1F4DD)};
   const lines=[
     E.clipboard+" TİŞÖRT SİPARİŞİ",
     "",
@@ -1200,61 +1191,113 @@ function safeShareText(bs,q,note,files,canFileShare){
     E.art+" Renk: "+String(colorName(shirtColor)||"Özel"),
     E.pin+" Baskı Alanı: "+(printAreaVisible?String(areaNames[printAreaIndex]||"Serbest Konum"):"Serbest Konum")
   ];
-  const catalogCodes=[...new Set([...layers.front,...layers.back]
-    .filter(l=>l.type==="image"&&l.catalogCode)
-    .map(l=>String(l.catalogCode).trim())
-    .filter(Boolean))].slice(0,10);
+  const catalogCodes=[...new Set([...layers.front,...layers.back].filter(l=>l.type==="image"&&l.catalogCode).map(l=>String(l.catalogCode).trim()).filter(Boolean))].slice(0,10);
   if(catalogCodes.length)lines.push(E.tag+" Katalog Kodu: "+catalogCodes.join(", "));
-  lines.push("",E.image+" Tişört tasarım görselleri ektedir.");
+  const cleanNote=String(note||"").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,"").trim();
+  if(cleanNote)lines.push("",E.note+" Not: "+cleanNote);
   return lines.join("\n").normalize("NFC");
 }
 
 function limitWhatsAppText(text,maxChars=1100){
   const t=String(text||"").normalize("NFC");
   if(t.length<=maxChars)return t;
-  // Notu mümkün olduğunca korumak yerine güvenli biçimde kesiyoruz;
-  // böylece wa.me hiçbir zaman aşırı uzun bir URL üretmez.
   return t.slice(0,maxChars-24).trimEnd()+"\n\n… Mesaj kısaltıldı.";
 }
 
-function openWhatsAppWithText(text){
-  const safeText=limitWhatsAppText(text);
-  window.location.assign("https://wa.me/?text="+encodeURIComponent(safeText));
+async function imageFromBlob(blob){
+  const url=URL.createObjectURL(blob);
+  try{return await loadImageForCanvas(url)}finally{URL.revokeObjectURL(url)}
+}
+
+function wrapCanvasText(ctx,text,maxWidth){
+  const words=String(text||"").split(/\s+/);
+  const lines=[];let line="";
+  for(const word of words){
+    const test=line?line+" "+word:word;
+    if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=word}else line=test;
+  }
+  if(line)lines.push(line);
+  return lines;
+}
+
+async function buildOrderCard(frontBlob,backBlob,bs,q,note){
+  const front=await imageFromBlob(frontBlob);
+  const back=await imageFromBlob(backBlob);
+  const text=limitWhatsAppText(safeShareText(bs,q,note));
+  const pad=44,cardW=1500,designW=680;
+  const frontH=Math.round(designW*(front.naturalHeight/front.naturalWidth));
+  const backH=Math.round(designW*(back.naturalHeight/back.naturalWidth));
+  const textLines=text.split("\n");
+  const textH=150+textLines.length*52;
+  const gap=28,cardH=pad+textH+gap+Math.max(frontH,backH)+pad;
+  const c=document.createElement("canvas");c.width=cardW;c.height=cardH;
+  const x=c.getContext("2d");
+  x.fillStyle="#ffffff";x.fillRect(0,0,cardW,cardH);
+  x.fillStyle="#111827";x.font="bold 46px Arial";x.textAlign="center";x.textBaseline="middle";
+  x.fillText("TİŞÖRT SİPARİŞİ",cardW/2,72);
+  x.strokeStyle="#d1d5db";x.lineWidth=2;x.beginPath();x.moveTo(pad,122);x.lineTo(cardW-pad,122);x.stroke();
+  x.textAlign="left";x.textBaseline="top";x.fillStyle="#111827";x.font="30px Arial";
+  let ty=148;
+  for(const line of textLines){
+    if(!line){ty+=20;continue}
+    x.fillText(line,pad,ty);ty+=52;
+  }
+  const y=pad+textH;
+  const gapX=70;
+  const totalW=designW*2+gapX;
+  const sx=(cardW-totalW)/2;
+  x.fillStyle="#f3f4f6";x.fillRect(sx,y,designW,Math.max(frontH,backH));
+  x.fillRect(sx+designW+gapX,y,designW,Math.max(frontH,backH));
+  x.drawImage(front,sx,y,designW,frontH);
+  x.drawImage(back,sx+designW+gapX,y,designW,backH);
+  x.fillStyle="#6b7280";x.font="bold 24px Arial";x.textAlign="center";
+  x.fillText("ÖN",sx+designW/2,y+Math.max(frontH,backH)+28);
+  x.fillText("ARKA",sx+designW+gapX+designW/2,y+Math.max(frontH,backH)+28);
+  const blob=await new Promise((resolve,reject)=>{try{c.toBlob(b=>b?resolve(b):reject(new Error("Sipariş kartı oluşturulamadı.")),"image/png",.95)}catch(e){reject(e)}});
+  return new File([blob],"tisort_siparis.png",{type:"image/png",lastModified:Date.now()});
+}
+
+function setShareButtonReady(){const btn=$("shareBtn");if(btn){btn.disabled=false;btn.textContent="WHATSAPP'TA PAYLAŞ"}}
+function setShareButtonBusy(label){const btn=$("shareBtn");if(btn){btn.disabled=true;btn.textContent=label||"SİPARİŞ GÖRSELİ HAZIRLANIYOR..."}}
+
+async function refreshOrderCard(){
+  const files=Array.isArray(shareFilesCache)?shareFilesCache:[];
+  if(files.length<2)return;
+  const token=++shareCardToken;
+  const q=String($("qty")?.value||"").trim();
+  const bs=String($("ordSize")?.value||"").trim();
+  const note=String($("ordNote")?.value||"").trim().slice(0,300);
+  setShareButtonBusy("SİPARİŞ GÖRSELİ HAZIRLANIYOR...");
+  try{
+    const card=await buildOrderCard(files[0],files[1],bs,q,note);
+    if(token!==shareCardToken)return;
+    shareCardFile=card;
+    const st=$("shareStatus");if(st)st.textContent="Tek WhatsApp sipariş görseli hazır.";
+    setShareButtonReady();
+  }catch(e){
+    console.warn("Sipariş görseli hazırlanamadı:",e);
+    if(token===shareCardToken){shareCardFile=null;const st=$("shareStatus");if(st)st.textContent="Sipariş görseli hazırlanamadı.";setShareButtonReady()}
+  }
 }
 
 function shareOrder(){
   const q=String($("qty").value||"").trim();
-  const bs=String($("ordSize").value||"").trim();
-  const note=String($("ordNote").value||"").trim().slice(0,300);
   if(!q||!Number.isFinite(+q)||+q<1){toast("Adet en az 1 olmalı.");return}
-
-  // Bu fonksiyon doğrudan buton tıklamasından çağrılır. Native paylaşımın
-  // kullanıcı hareketi (user activation) hakkını kaybetmemek için await/delay yok.
-  const files=Array.isArray(shareFilesCache)?shareFilesCache.filter(f=>f instanceof File):[];
-  const text=limitWhatsAppText(safeShareText(bs,q,note,files,files.length>0));
-
-  // KRİTİK: Görsel ve sipariş metni TEK Web Share isteğinde gönderiliyor.
-  // Önce görseli paylaş, sonra wa.me ile metni aç yaklaşımı Android'de iki ayrı
-  // paylaşım/mesaj oluşturabiliyordu. Bu nedenle ikinci bir WhatsApp yönlendirmesi yok.
-  if(files.length && navigator.share && navigator.canShare){
+  const file=shareCardFile;
+  if(!file){toast("Sipariş görseli henüz hazır değil. Lütfen birkaç saniye bekleyin.");return}
+  if(navigator.share&&navigator.canShare){
     try{
-      if(navigator.canShare({files,text})){
-        navigator.share({files,text}).catch(e=>{
-          if(e && e.name !== "AbortError") console.warn("Görsel+metin paylaşımı başarısız:",e);
-        });
+      if(navigator.canShare({files:[file]})){
+        navigator.share({files:[file]}).catch(e=>{if(e&&e.name!=="AbortError")console.warn("WhatsApp paylaşımı başarısız:",e)});
         return;
       }
-    }catch(e){
-      console.warn("Görsel+metin paylaşımı başlatılamadı:",e);
-    }
+    }catch(e){console.warn("Görsel paylaşımı başlatılamadı:",e)}
   }
-
-  // Dosya paylaşımı desteklenmeyen tarayıcıda güvenli geri dönüş: yalnızca metin.
-  window.location.assign("https://wa.me/?text="+encodeURIComponent(text));
+  toast("Bu tarayıcı tek görsel paylaşımını desteklemiyor. Android Chrome veya Safari ile deneyin.");
 }
 
 function openOrder(){
-  shareFilesCache=null;
+  shareFilesCache=null;shareCardFile=null;shareCardToken++;
   const token=++sharePrepToken;
   openDialog(
     `<h2>Sipariş Oluştur <button class="close" onclick="closeDialog()">Kapat</button></h2>`+
@@ -1262,9 +1305,13 @@ function openOrder(){
     `<div class="row"><select id="ordSize" class="field"><option>XS - 86</option><option>S - 98</option><option>M - 104</option><option>L - 116</option><option>XL - 128</option><option>2XL - 134</option><option>3XL - 140</option><option>4XL - 152</option><option>5XL - 164</option><option>6XL - 176</option></select>`+
     `<input id="qty" class="field" inputmode="numeric" value="1" placeholder="Adet"></div>`+
     `<textarea id="ordNote" class="field" maxlength="300" placeholder="Not (isteğe bağlı, en fazla 300 karakter)"></textarea>`+
-    `<div id="shareStatus" class="small">Tasarım görselleri hazırlanıyor...</div>`+
-    `<button id="shareBtn" type="button" class="primary green" disabled onclick="shareOrder()">GÖRSELLER HAZIRLANIYOR...</button>`
+    `<div id="shareStatus" class="small">Ön ve arka tasarım tek sipariş görseline hazırlanıyor...</div>`+
+    `<button id="shareBtn" type="button" class="primary green" disabled onclick="shareOrder()">GÖRSEL HAZIRLANIYOR...</button>`
   );
+  const watch=()=>{if(shareFilesCache)refreshOrderCard()};
+  $("ordSize").addEventListener("change",watch);
+  $("qty").addEventListener("input",watch);
+  $("ordNote").addEventListener("input",watch);
   prepareShareFiles(token);
 }
 
@@ -1275,24 +1322,19 @@ async function prepareShareFiles(token){
       const result=await renderSide(sideName);
       if(result&&result.has&&result.blob){
         const fileName=sideName==="front"?"tisort_on.png":"tisort_arka.png";
-        files.push(new File([result.blob],fileName,{
-          type:result.blob.type||"image/png",
-          lastModified:Date.now()
-        }));
+        files.push(new File([result.blob],fileName,{type:result.blob.type||"image/png",lastModified:Date.now()}));
       }
-    }catch(e){
-      console.warn("Görsel hazırlanamadı ("+sideName+"):",e);
-    }
+    }catch(e){console.warn("Görsel hazırlanamadı ("+sideName+"):",e)}
   }
   if(token!==sharePrepToken)return;
   shareFilesCache=files;
-  const st=$("shareStatus"),btn=$("shareBtn");
-  if(st){
-    st.textContent=files.length
-      ? `${files.length} tasarım görseli hazır.`
-      : "Görsel paylaşımı bu tarayıcıda hazırlanamadı; WhatsApp sipariş metni yine gönderilebilir.";
+  if(files.length>=2){
+    const st=$("shareStatus");if(st)st.textContent="Ön ve arka tasarım hazır. Sipariş kartı oluşturuluyor...";
+    await refreshOrderCard();
+  }else{
+    const st=$("shareStatus");if(st)st.textContent="Ön/arka tasarım hazırlanamadı.";
+    setShareButtonReady();
   }
-  if(btn){btn.disabled=false;btn.textContent="WHATSAPP'TA PAYLAŞ"}
 }
 
 async function renderSide(s){
