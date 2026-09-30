@@ -1221,13 +1221,14 @@ function wrapCanvasText(ctx,text,maxWidth){
 }
 
 async function buildOrderCard(frontBlob,backBlob,bs,q,note){
-  const front=await imageFromBlob(frontBlob);
-  const back=await imageFromBlob(backBlob);
+  const front=frontBlob?await imageFromBlob(frontBlob):null;
+  const back=backBlob?await imageFromBlob(backBlob):null;
+  if(!front&&!back)throw new Error('En az bir tasarım görseli gerekli.');
   const text=limitWhatsAppText(safeShareText(bs,q,note));
   const pad=42,cardW=1600,designW=720,gapX=80;
-  const frontH=Math.round(designW*(front.naturalHeight/front.naturalWidth));
-  const backH=Math.round(designW*(back.naturalHeight/back.naturalWidth));
-  const designH=Math.max(frontH,backH);
+  const frontH=front?Math.round(designW*(front.naturalHeight/front.naturalWidth)):0;
+  const backH=back?Math.round(designW*(back.naturalHeight/back.naturalWidth)):0;
+  const designH=Math.max(frontH,backH,designW);
   const lines=[];
   for(const raw of text.split('\n')){
     if(!raw){lines.push('');continue}
@@ -1265,12 +1266,21 @@ async function buildOrderCard(frontBlob,backBlob,bs,q,note){
   x.fillStyle='#f3f4f6';
   x.fillRect(sx,y,designW,designH);
   x.fillRect(sx+designW+gapX,y,designW,designH);
-  x.drawImage(front,sx,y,designW,frontH);
-  x.drawImage(back,sx+designW+gapX,y,designW,backH);
+  if(front){
+    const fy=y+Math.round((designH-frontH)/2);
+    x.drawImage(front,sx,fy,designW,frontH);
+  }
+  if(back){
+    const by=y+Math.round((designH-backH)/2);
+    x.drawImage(back,sx+designW+gapX,by,designW,backH);
+  }else{
+    x.fillStyle='#6b7280';x.font='700 30px Arial';x.textAlign='center';x.textBaseline='middle';
+    x.fillText('ARKA BASKI YOK',sx+designW+gapX+designW/2,y+designH/2);
+  }
 
   x.fillStyle='#111827';x.font='800 26px Arial';x.textAlign='center';x.textBaseline='top';
   x.fillText('ÖN TASARIM',sx+designW/2,y+designH+18);
-  x.fillText('ARKA TASARIM',sx+designW+gapX+designW/2,y+designH+18);
+  x.fillText(back?'ARKA TASARIM':'ARKA BASKI YOK',sx+designW+gapX+designW/2,y+designH+18);
 
   const blob=await new Promise((resolve,reject)=>{
     try{c.toBlob(b=>b?resolve(b):reject(new Error('Sipariş kartı oluşturulamadı.')),'image/png')}
@@ -1284,14 +1294,15 @@ function setShareButtonBusy(label){const btn=$('shareBtn');if(btn){btn.disabled=
 
 async function refreshOrderCard(){
   const files=Array.isArray(shareFilesCache)?shareFilesCache:[];
-  if(files.length<2)return;
+  // Tek taraflı baskı da geçerli: yalnızca ön tasarım hazırsa sipariş kartı oluştur.
+  if(files.length<1)return;
   const token=++shareCardToken;
   const q=String($('qty')?.value||'').trim();
   const bs=String($('ordSize')?.value||'').trim();
   const note=String($('ordNote')?.value||'').trim().slice(0,300);
   setShareButtonBusy('SİPARİŞ GÖRSELİ HAZIRLANIYOR...');
   try{
-    const card=await buildOrderCard(files[0],files[1],bs,q,note);
+    const card=await buildOrderCard(files[0]||null,files[1]||null,bs,q,note);
     if(token!==shareCardToken)return;
     shareCardFile=card;
     const st=$('shareStatus');if(st)st.textContent='Tek PNG sipariş görseli hazır: ön + arka + sipariş bilgileri.';
@@ -1332,7 +1343,7 @@ function openOrder(){
     `<div class="row"><select id="ordSize" class="field"><option>XS - 86</option><option>S - 98</option><option>M - 104</option><option>L - 116</option><option>XL - 128</option><option>2XL - 134</option><option>3XL - 140</option><option>4XL - 152</option><option>5XL - 164</option><option>6XL - 176</option></select>`+
     `<input id="qty" class="field" inputmode="numeric" value="1" placeholder="Adet"></div>`+
     `<textarea id="ordNote" class="field" maxlength="300" placeholder="Not (isteğe bağlı, en fazla 300 karakter)"></textarea>`+
-    `<div id="shareStatus" class="small">Ön ve arka tasarım tek sipariş görseline hazırlanıyor...</div>`+
+    `<div id="shareStatus" class="small">Tasarım tek sipariş görseline hazırlanıyor...</div>`+
     `<button id="shareBtn" type="button" class="primary green" disabled onclick="shareOrder()">GÖRSEL HAZIRLANIYOR...</button>`
   );
   const watch=()=>{if(shareFilesCache)refreshOrderCard()};
@@ -1355,11 +1366,14 @@ async function prepareShareFiles(token){
   }
   if(token!==sharePrepToken)return;
   shareFilesCache=files;
-  if(files.length>=2){
-    const st=$("shareStatus");if(st)st.textContent="Ön ve arka tasarım hazır. Sipariş kartı oluşturuluyor...";
+  if(files.length>=1){
+    const st=$("shareStatus");
+    if(st)st.textContent=files.length>=2
+      ?"Ön ve arka tasarım hazır. Sipariş kartı oluşturuluyor..."
+      :"Yalnızca ön tasarım hazır. Arka baskı olmadan sipariş görseli oluşturuluyor...";
     await refreshOrderCard();
   }else{
-    const st=$("shareStatus");if(st)st.textContent="Ön/arka tasarım hazırlanamadı.";
+    const st=$("shareStatus");if(st)st.textContent="Tasarım görseli hazırlanamadı.";
     setShareButtonReady();
   }
 }
