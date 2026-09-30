@@ -1139,10 +1139,6 @@ $("templateInput").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=
 
 let shareFilesCache=null;
 let sharePrepToken=0;
-function blobFile(blob,name){
-  if(!(blob instanceof Blob)) throw new Error("Geçersiz görsel verisi.");
-  return new File([blob],name,{type:blob.type||"image/png",lastModified:Date.now()});
-}
 function storageGet(key){try{return localStorage.getItem(key)||""}catch(_){return ""}}
 function storageSet(key,value){try{localStorage.setItem(key,value)}catch(_){} }
 function unicodeChar(cp){return String.fromCodePoint(cp)}
@@ -1280,28 +1276,31 @@ function openOrder(){
 
 async function prepareShareFiles(token){
   const files=[];
-  const failures=[];
   for(const sideName of ["front","back"]){
     try{
       const result=await renderSide(sideName);
-      if(result.has&&result.blob){
-        files.push(blobFile(result.blob,sideName==="front"?"tisort_on.png":"tisort_arka.png"));
+      if(result&&result.has&&result.blob){
+        const fileName=sideName==="front"?"tisort_on.png":"tisort_arka.png";
+        files.push(new File([result.blob],fileName,{
+          type:result.blob.type||"image/png",
+          lastModified:Date.now()
+        }));
       }
     }catch(e){
-      failures.push(sideName+": "+(e?.message||e));
-      console.warn(""+sideName+" görseli hazırlanamadı:",e);
+      console.warn("Görsel hazırlanamadı ("+sideName+"):",e);
     }
   }
   if(token!==sharePrepToken)return;
   shareFilesCache=files;
   const st=$("shareStatus"),btn=$("shareBtn");
   if(st){
-    if(files.length===2) st.textContent="2 tasarım görseli hazır.";
-    else if(files.length===1) st.textContent="1 tasarım görseli hazır. WhatsApp'ta paylaşılabilir.";
-    else st.textContent="Görseller hazırlanamadı; yalnızca sipariş metni paylaşılabilir.";
+    st.textContent=files.length
+      ? `${files.length} tasarım görseli hazır.`
+      : "Görsel paylaşımı bu tarayıcıda hazırlanamadı; WhatsApp sipariş metni yine gönderilebilir.";
   }
   if(btn){btn.disabled=false;btn.textContent="WHATSAPP'TA PAYLAŞ"}
 }
+
 async function renderSide(s){
  const list=layers[s];
  if(!list.length)return {has:false,blob:null};
