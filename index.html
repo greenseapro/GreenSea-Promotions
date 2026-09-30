@@ -1137,7 +1137,7 @@ function storageSet(key,value){try{localStorage.setItem(key,value)}catch(_){} }
 function openOrder(){
  shareFilesCache=null;
  const token=++sharePrepToken;
- openDialog(`<h2>Sipariş Oluştur <button class="close" onclick="closeDialog()">Kapat</button></h2><div class="small">👕 Tasarımın hazır — siparişe dönüştürelim</div><div class="row"><select id="ordSize" class="field"><option>S</option><option>M</option><option>L</option><option>XL</option><option>XXL</option></select><input id="qty" class="field" inputmode="numeric" value="1" placeholder="Adet"></div><textarea id="ordNote" class="field" placeholder="Not (isteğe bağlı)"></textarea><div id="shareStatus" class="small">Tasarım görselleri hazırlanıyor...</div><button id="shareBtn" class="primary green" disabled onclick="shareOrder()">GÖRSELLER HAZIRLANIYOR...</button>`);
+ openDialog(`<h2>Sipariş Oluştur <button class="close" onclick="closeDialog()">Kapat</button></h2><div class="small">👕 Tasarımın hazır — siparişe dönüştürelim</div><div class="row"><select id="ordSize" class="field"><option>S</option><option>M</option><option>L</option><option>XL</option><option>XXL</option></select><input id="qty" class="field" inputmode="numeric" value="1" placeholder="Adet"></div><textarea id="ordNote" class="field" maxlength="500" placeholder="Not (isteğe bağlı, en fazla 500 karakter)"></textarea><div id="shareStatus" class="small">Tasarım görselleri hazırlanıyor...</div><button id="shareBtn" class="primary green" disabled onclick="shareOrder()">GÖRSELLER HAZIRLANIYOR...</button>`);
  prepareShareFiles(token);
 }
 async function prepareShareFiles(token){
@@ -1161,24 +1161,96 @@ async function prepareShareFiles(token){
    if(btn){btn.disabled=false;btn.textContent="WHATSAPP'TA PAYLAŞ"}
  }
 }
+function buildOrderText(bs,q,note,files,canFileShare){
+ const catalogCodes=[...new Set([...layers.front,...layers.back]
+   .filter(l=>l.type==="image"&&l.catalogCode)
+   .map(l=>String(l.catalogCode).trim())
+   .filter(Boolean))].slice(0,10);
+
+ // Eski cihazlarda bozuk görünme ihtimali yüksek olan yeni emoji yerine
+ // yaygın Unicode karakterleri kullanıyoruz.
+ const lines=[
+   "📋 TİŞÖRT SİPARİŞİ",
+   "",
+   "👕 Beden: "+bs,
+   "🔢 Adet: "+q,
+   "🎨 Renk: "+colorName(shirtColor),
+   "📍 Baskı Alanı: "+(printAreaVisible?areaNames[printAreaIndex]:"Serbest Konum")
+ ];
+ if(catalogCodes.length)lines.push("🏷️ Katalog Kodu: "+catalogCodes.join(", "));
+ if(note)lines.push("", "📝 Not: "+note);
+ lines.push("", "🖼️ "+(files.length
+   ? (canFileShare?"Tişört tasarım görselleri ektedir.":"Tişört tasarım görselleri ayrıca eklenmelidir.")
+   : "Tasarım görseli oluşturulamadı."));
+ return lines.join("\n");
+}
+
+function openWhatsAppWithText(text){
+ const encoded=encodeURIComponent(text);
+ // wa.me URL'si için gereksiz derecede uzun bir payload göndermiyoruz.
+ // Not alanı ayrıca 500 karakterle sınırlandığı için normal sipariş mesajı kısa kalır.
+ if(encoded.length>6000){
+   const compact="📋 TİŞÖRT SİPARİŞİ\nBeden: "+$("ordSize").value+
+     "\nAdet: "+$("qty").value+
+     "\nRenk: "+colorName(shirtColor)+
+     "\nBaskı Alanı: "+(printAreaVisible?areaNames[printAreaIndex]:"Serbest Konum");
+   window.open("https://wa.me/?text="+encodeURIComponent(compact),"_blank");
+   return;
+ }
+ window.open("https://wa.me/?text="+encoded,"_blank");
+}
+
 async function shareOrder(){
- const q=$("qty").value.trim(),bs=$("ordSize").value,note=$("ordNote").value.trim();
+ const q=$("qty").value.trim(),bs=$("ordSize").value,note=$("ordNote").value.trim().slice(0,500);
  if(!q||+q<1){toast("Adet en az 1 olmalı.");return}
- const catalogCodes=[...new Set([...layers.front,...layers.back].filter(l=>l.type==="image"&&l.catalogCode).map(l=>l.catalogCode))];
- const files=shareFilesCache||[];
- const canFileShare=!!(navigator.canShare&&files.length&&navigator.canShare({files}));
- const imageNote=files.length?(canFileShare?"Tişört tasarım görselleri ektedir.":"Tişört tasarım görselleri ayrıca eklenmelidir."):"Tasarım görseli oluşturulamadı.";
- const text=`\u{1F9FE} TİŞÖRT SİPARİŞİ\n\n\u{1F455} Beden: ${bs}\n\u{1F522} Adet: ${q}\n\u{1F3A8} Renk: ${colorName(shirtColor)}\n\u{1F4CD} Baskı Alanı: ${printAreaVisible?areaNames[printAreaIndex]:"Serbest Konum"}${catalogCodes.length?`\n\u{1F3F7}\u{FE0F} Katalog Kodu: ${catalogCodes.join(", ")}`:""}${note?`\n\n\u{1F4DD} Not: ${note}`:""}\n\n\u{1F5BC}\u{FE0F} ${imageNote}`;
+
+ const files=Array.isArray(shareFilesCache)?shareFilesCache:[];
+ const canFileShare=!!(
+   navigator.share &&
+   files.length &&
+   navigator.canShare &&
+   navigator.canShare({files})
+ );
+ const text=buildOrderText(bs,q,note,files,canFileShare);
+
  if(canFileShare){
    try{
+     // Mobil tarayıcı dosyalı Web Share destekliyorsa görseller gerçekten
+     // paylaşım paketinin içine girer.
      await navigator.share({title:"Tişört Siparişi",text,files});
-     toast("Paylaşım ekranı açıldı.");
+     toast("Tasarım görselleri paylaşım ekranına eklendi.");
      return;
    }catch(e){
+     // Kullanıcı paylaşım ekranını kapattıysa yeni pencere açma.
      if(e&&e.name==="AbortError")return;
+     console.warn("Dosyalı paylaşım başarısız:",e);
    }
  }
- try{window.open("https://wa.me/?text="+encodeURIComponent(text),"_blank")}catch(e){toast("WhatsApp açılamadı. Tarayıcı açılır pencereyi engelliyor olabilir.")}
+
+ // Dosyalı paylaşım desteklenmiyorsa tarayıcı güvenlik nedeniyle WhatsApp'a
+ // dosya ekleyemez. Bu durumda görselleri indirip WhatsApp'ı metinle açıyoruz.
+ if(files.length){
+   files.forEach((file,index)=>{
+     setTimeout(()=>{
+       downloadBlob(file,"tisort_"+(index===0?"on":"arka")+".png");
+     },index*350);
+   });
+   setTimeout(()=>{
+     try{
+       openWhatsAppWithText(text);
+       toast("Görseller indiriliyor. WhatsApp açıldı; indirilen görselleri sohbete ekleyebilirsin.");
+     }catch(e){
+       toast("WhatsApp açılamadı. Görseller cihazına indirildi.");
+     }
+   },Math.max(500,files.length*400));
+   return;
+ }
+
+ try{
+   openWhatsAppWithText(text);
+ }catch(e){
+   toast("WhatsApp açılamadı. Tarayıcı açılır pencereyi engelliyor olabilir.");
+ }
 }
 function colorName(c){return({"#ffffff":"Beyaz","#fff":"Beyaz","#000000":"Siyah","#000":"Siyah","#ff0000":"Kırmızı","#f00":"Kırmızı","#0000ff":"Mavi","#00f":"Mavi","#199150":"Yeşil","#ff0":"Sarı","#ff8000":"Turuncu","#800080":"Mor","#787d87":"Gri","#122d5f":"Lacivert","#e15a91":"Pembe"})[c.toLowerCase()]||"Özel"}
 async function blobFile(blob,name){return new File([blob],name,{type:"image/png"})}
