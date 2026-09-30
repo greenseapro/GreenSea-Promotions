@@ -1208,11 +1208,9 @@ function safeShareText(bs,q,note,files,canFileShare){
     .map(l=>String(l.catalogCode).trim())
     .filter(Boolean))].slice(0,10);
   if(catalogCodes.length)lines.push(E.tag+" Katalog Kodu: "+catalogCodes.join(", "));
-  const cleanNote=String(note||"").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,"").trim();
-  if(cleanNote)lines.push("",E.note+" Not: "+cleanNote);
-  // Görsel paylaşımı destekleniyorsa bu metin doğrudan görselin açıklaması
-  // (caption) olarak WhatsApp'a gider. Bu yüzden ayrıca "görsel ektedir"
-  // satırı eklemiyoruz; böylece görselin altında temiz sipariş metni görünür.
+  // WhatsApp sipariş mesajı sabit ve sade formatta tutulur.
+  // Kullanıcı notu bu şablona eklenmez.
+  lines.push("",E.image+" Tişört tasarım görselleri ektedir.");
   return lines.join("\n").normalize("NFC");
 }
 
@@ -1243,9 +1241,7 @@ function shareOrder(){
   if(files.length && navigator.share && navigator.canShare){
     try{
       if(navigator.canShare({files})){
-        // Dosyayı ve metni aynı native share isteğinde gönderiyoruz.
-        // WhatsApp bunu görsel + görselin altında açıklama (caption) olarak işler.
-        navigator.share({files,text});
+        navigator.share({title:"Tişört Tasarımı",text,files});
         return;
       }
     }catch(e){
@@ -1265,7 +1261,7 @@ function openOrder(){
   openDialog(
     `<h2>Sipariş Oluştur <button class="close" onclick="closeDialog()">Kapat</button></h2>`+
     `<div class="small">👕 Tasarımın hazır — siparişe dönüştürelim</div>`+
-    `<div class="row"><select id="ordSize" class="field"><option>XS - 86</option><option>S - 98</option><option>M - 104</option><option>L - 116</option><option>XL - 128</option><option>2XL - 134</option><option>3XL - 140</option><option>4XL - 152</option><option>5XL - 164</option><option>6XL - 176</option></select>`+
+    `<div class="row"><select id="ordSize" class="field"><option>S</option><option>M</option><option>L</option><option>XL</option><option>XXL</option></select>`+
     `<input id="qty" class="field" inputmode="numeric" value="1" placeholder="Adet"></div>`+
     `<textarea id="ordNote" class="field" maxlength="300" placeholder="Not (isteğe bağlı, en fazla 300 karakter)"></textarea>`+
     `<div id="shareStatus" class="small">Tasarım görselleri hazırlanıyor...</div>`+
