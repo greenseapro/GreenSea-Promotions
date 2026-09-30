@@ -1240,12 +1240,14 @@ function openWhatsAppWithText(text){
   }
 }
 
-async function shareOrder(){
+function shareOrder(){
   const q=String($("qty").value||"").trim();
   const bs=String($("ordSize").value||"").trim();
   const note=String($("ordNote").value||"").trim().slice(0,300);
   if(!q||!Number.isFinite(+q)||+q<1){toast("Adet en az 1 olmalı.");return}
 
+  // Kritik: Bu fonksiyon doğrudan buton tıklamasından çalışır.
+  // navigator.share() çağrısından önce await/setTimeout/window.open yoktur.
   const files=Array.isArray(shareFilesCache)?shareFilesCache.filter(f=>f instanceof File):[];
   const canFileShare=!!(
     navigator.share &&
@@ -1255,60 +1257,30 @@ async function shareOrder(){
   );
   const text=limitWhatsAppText(safeShareText(bs,q,note,files,canFileShare));
 
-  // Mobil/uyumlu tarayıcıda önce yalnızca görselleri paylaş.
-  // Kullanıcı görselleri WhatsApp'ta gönderdikten sonra sipariş metnini ayrı
-  // bir WhatsApp penceresinde açıyoruz. Böylece sıra: GÖRSEL -> MESAJ.
   if(canFileShare){
-    try{
-      await navigator.share({
-        title:"Tişört Tasarımı",
-        files
-      });
-
-      // Görsel paylaşımı tamamlandıktan sonra metni aç.
-      // Küçük gecikme WhatsApp'ın paylaşım ekranından dönmesine zaman verir.
-      setTimeout(()=>{
-        try{
-          openWhatsAppWithText(text);
-          toast("Önce tasarım görselleri, ardından sipariş mesajı gönderilecek.");
-        }catch(e){
-          toast("Görseller paylaşıldı. Sipariş mesajı için WhatsApp'ı açabilirsin.");
-        }
-      },700);
-      return;
-    }catch(e){
-      if(e&&e.name==="AbortError")return;
+    // iOS/Android için dosya paylaşımını doğrudan kullanıcı hareketi içinde başlat.
+    // Özellikle setTimeout ve share() sonrasında wa.me açma YOK.
+    navigator.share({
+      title:"Tişört Tasarımı",
+      files:files
+    }).then(()=>{
+      toast("Paylaşım ekranından WhatsApp'ı seçebilirsin.");
+    }).catch(e=>{
+      if(e&&e.name==="AbortError") return;
       console.warn("Görsel paylaşımı başarısız:",e);
-    }
-  }
-
-  // Masaüstü tarayıcılar wa.me URL'sine dosya eklenmesine izin vermez.
-  // Bu nedenle dosyaları indirip kısa sipariş metnini WhatsApp'a açıyoruz.
-  if(files.length){
-    try{
-      files.forEach((file,index)=>{
-        setTimeout(()=>{
-          downloadBlob(file,"tisort_"+(index===0?"on":"arka")+".png");
-        },index*250);
-      });
-      setTimeout(()=>{
-        try{
-          openWhatsAppWithText(text);
-          toast("Tasarım görselleri indirildi. WhatsApp açıldı; görselleri mesaja ekleyebilirsin.");
-        }catch(e){
-          toast("WhatsApp açılamadı. Görseller cihazına indirildi.");
-        }
-      },Math.max(700,files.length*350));
-    }catch(e){
-      toast("Görseller indirilemedi.");
-    }
+      toast("Görsel paylaşımı bu tarayıcıda desteklenmedi. WhatsApp mesajını açmak için tekrar deneyebilirsin.");
+    });
     return;
   }
 
+  // Dosya paylaşımı desteklenmiyorsa metin URL'sini de doğrudan bu kullanıcı
+  // tıklamasının içinde aç. setTimeout/window.open zinciri kullanma.
   try{
-    openWhatsAppWithText(text);
+    const safeText=limitWhatsAppText(text);
+    const url="https://wa.me/?text="+encodeURIComponent(safeText);
+    window.location.href=url;
   }catch(e){
-    toast("WhatsApp açılamadı. Tarayıcı açılır pencereyi engelliyor olabilir.");
+    toast("WhatsApp açılamadı.");
   }
 }
 
