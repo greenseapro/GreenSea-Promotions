@@ -1210,11 +1210,9 @@ function safeShareText(bs,q,note,files,canFileShare){
   if(catalogCodes.length)lines.push(E.tag+" Katalog Kodu: "+catalogCodes.join(", "));
   const cleanNote=String(note||"").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,"").trim();
   if(cleanNote)lines.push("",E.note+" Not: "+cleanNote);
-  lines.push("",E.image+" "+(
-    files.length
-      ? (canFileShare?"Tişört tasarım görselleri ektedir.":"Tişört tasarım görselleri cihazınıza kaydedilecektir.")
-      : "Tasarım görseli oluşturulamadı."
-  ));
+  // Görsel paylaşımı destekleniyorsa bu metin doğrudan görselin açıklaması
+  // (caption) olarak WhatsApp'a gider. Bu yüzden ayrıca "görsel ektedir"
+  // satırı eklemiyoruz; böylece görselin altında temiz sipariş metni görünür.
   return lines.join("\n").normalize("NFC");
 }
 
@@ -1245,7 +1243,9 @@ function shareOrder(){
   if(files.length && navigator.share && navigator.canShare){
     try{
       if(navigator.canShare({files})){
-        navigator.share({title:"Tişört Tasarımı",text,files});
+        // Dosyayı ve metni aynı native share isteğinde gönderiyoruz.
+        // WhatsApp bunu görsel + görselin altında açıklama (caption) olarak işler.
+        navigator.share({files,text});
         return;
       }
     }catch(e){
