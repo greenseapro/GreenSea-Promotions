@@ -1217,27 +1217,13 @@ function limitWhatsAppText(text,maxChars=1100){
 }
 
 function openWhatsAppWithText(text){
+  // Eski popup / whatsapp:// fallback'leri kasıtlı olarak kaldırıldı.
+  // Mobilde doğrudan sistem paylaşım ekranı kullanılmalıdır.
   const safeText=limitWhatsAppText(text);
-  const encoded=encodeURIComponent(safeText);
-  // 1100 karakterlik metin bile URL tarafında cihazdan cihaza farklı
-  // uzunluklara dönüşebilir. İkinci güvenlik katmanı.
-  if(encoded.length>5000){
-    const compact=[
-      "TİŞÖRT SİPARİŞİ",
-      "Beden: "+String($("ordSize").value||""),
-      "Adet: "+String($("qty").value||""),
-      "Renk: "+String(colorName(shirtColor)||"Özel"),
-      "Baskı Alanı: "+(printAreaVisible?String(areaNames[printAreaIndex]||"Serbest Konum"):"Serbest Konum")
-    ].join("\n");
-    window.open("https://wa.me/?text="+encodeURIComponent(compact),"_blank");
-    return;
+  if(navigator.share){
+    return navigator.share({title:"Tişört Siparişi",text:safeText});
   }
-  const url="https://wa.me/?text="+encoded;
-  const w=window.open(url,"_blank","noopener,noreferrer");
-  if(!w){
-    // Popup engellendiyse aynı sekmede açmayı dene.
-    window.location.href=url;
-  }
+  throw new Error("Bu tarayıcı Web Share API'yi desteklemiyor.");
 }
 
 function shareOrder(){
@@ -1246,41 +1232,39 @@ function shareOrder(){
   const note=String($("ordNote").value||"").trim().slice(0,300);
   if(!q||!Number.isFinite(+q)||+q<1){toast("Adet en az 1 olmalı.");return}
 
-  // Kritik: Bu fonksiyon doğrudan buton tıklamasından çalışır.
-  // navigator.share() çağrısından önce await/setTimeout/window.open yoktur.
+  // Bu fonksiyon doğrudan kullanıcının buton tıklamasından çağrılır.
+  // Burada await, setTimeout, window.open veya whatsapp:// yoktur.
   const files=Array.isArray(shareFilesCache)?shareFilesCache.filter(f=>f instanceof File):[];
-  const canFileShare=!!(
-    navigator.share &&
-    files.length &&
-    navigator.canShare &&
-    navigator.canShare({files})
-  );
-  const text=limitWhatsAppText(safeShareText(bs,q,note,files,canFileShare));
+  const text=limitWhatsAppText(safeShareText(bs,q,note,files,files.length>0));
 
-  if(canFileShare){
-    // iOS/Android için dosya paylaşımını doğrudan kullanıcı hareketi içinde başlat.
-    // Özellikle setTimeout ve share() sonrasında wa.me açma YOK.
-    navigator.share({
-      title:"Tişört Tasarımı",
-      files:files
-    }).then(()=>{
-      toast("Paylaşım ekranından WhatsApp'ı seçebilirsin.");
-    }).catch(e=>{
-      if(e&&e.name==="AbortError") return;
-      console.warn("Görsel paylaşımı başarısız:",e);
-      toast("Görsel paylaşımı bu tarayıcıda desteklenmedi. WhatsApp mesajını açmak için tekrar deneyebilirsin.");
-    });
-    return;
+  if(navigator.share){
+    try{
+      if(files.length && navigator.canShare && navigator.canShare({files})){
+        // iPhone/Android: görselleri doğrudan sistem paylaşım ekranına gönder.
+        navigator.share({title:"Tişört Tasarımı",files:files}).then(()=>{
+          toast("Paylaşım ekranından WhatsApp'ı seçebilirsin.");
+        }).catch(e=>{
+          if(e&&e.name!=="AbortError") console.warn("Görsel paylaşımı başarısız:",e);
+        });
+        return;
+      }
+      // Dosya paylaşımı desteklenmiyorsa metni doğrudan sistem paylaşımına gönder.
+      navigator.share({title:"Tişört Siparişi",text:text}).catch(e=>{
+        if(e&&e.name!=="AbortError") console.warn("Metin paylaşımı başarısız:",e);
+      });
+      return;
+    }catch(e){
+      console.warn("Web Share kullanılamadı:",e);
+    }
   }
 
-  // Dosya paylaşımı desteklenmiyorsa metin URL'sini de doğrudan bu kullanıcı
-  // tıklamasının içinde aç. setTimeout/window.open zinciri kullanma.
+  // Web Share olmayan masaüstü tarayıcıda sadece panoya kopyala.
+  // WhatsApp popup'ı açmaya çalışma; popup/user-gesture hatası üretme.
   try{
-    const safeText=limitWhatsAppText(text);
-    const url="https://wa.me/?text="+encodeURIComponent(safeText);
-    window.location.href=url;
+    navigator.clipboard?.writeText(text);
+    toast("Sipariş metni panoya kopyalandı. WhatsApp'ı açıp yapıştırabilirsin.");
   }catch(e){
-    toast("WhatsApp açılamadı.");
+    toast("Bu tarayıcı paylaşımı desteklemiyor.");
   }
 }
 
