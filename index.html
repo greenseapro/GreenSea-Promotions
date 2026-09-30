@@ -1218,20 +1218,30 @@ async function shareOrder(){
   );
   const text=limitWhatsAppText(safeShareText(bs,q,note,files,canFileShare));
 
-  // En doğru yöntem: mobil/uyumlu tarayıcıda dosyaları gerçek paylaşım
-  // paketine ver. WhatsApp seçildiğinde görseller bu paketin içinden gider.
+  // Mobil/uyumlu tarayıcıda önce yalnızca görselleri paylaş.
+  // Kullanıcı görselleri WhatsApp'ta gönderdikten sonra sipariş metnini ayrı
+  // bir WhatsApp penceresinde açıyoruz. Böylece sıra: GÖRSEL -> MESAJ.
   if(canFileShare){
     try{
       await navigator.share({
-        title:"Tişört Siparişi",
-        text,
+        title:"Tişört Tasarımı",
         files
       });
-      toast("Tasarım görselleri paylaşım ekranına eklendi.");
+
+      // Görsel paylaşımı tamamlandıktan sonra metni aç.
+      // Küçük gecikme WhatsApp'ın paylaşım ekranından dönmesine zaman verir.
+      setTimeout(()=>{
+        try{
+          openWhatsAppWithText(text);
+          toast("Önce tasarım görselleri, ardından sipariş mesajı gönderilecek.");
+        }catch(e){
+          toast("Görseller paylaşıldı. Sipariş mesajı için WhatsApp'ı açabilirsin.");
+        }
+      },700);
       return;
     }catch(e){
       if(e&&e.name==="AbortError")return;
-      console.warn("Dosyalı paylaşım başarısız:",e);
+      console.warn("Görsel paylaşımı başarısız:",e);
     }
   }
 
