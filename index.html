@@ -1215,68 +1215,65 @@ async function shareOrder(){
   if(!q||!Number.isFinite(+q)||+q<1){toast("Adet en az 1 olmalı.");return}
 
   const files=Array.isArray(shareFilesCache)?shareFilesCache.filter(f=>f instanceof File):[];
-  const canFileShare=!!(
-    navigator.share &&
-    files.length &&
-    navigator.canShare &&
-    navigator.canShare({files})
-  );
-  const text=limitWhatsAppText(safeShareText(bs,q,note,files,canFileShare));
+  const text=limitWhatsAppText(safeShareText(bs,q,note,files,files.length>0));
 
-  // Mobil/uyumlu tarayıcıda önce yalnızca görselleri paylaş.
-  // Kullanıcı görselleri WhatsApp'ta gönderdikten sonra sipariş metnini ayrı
-  // bir WhatsApp penceresinde açıyoruz. Böylece sıra: GÖRSEL -> MESAJ.
-  if(canFileShare){
+  // MOBİL (iPhone/Android): tek ve doğrudan Web Share çağrısı.
+  // navigator.share() sonrasında tekrar window.open/location kullanmıyoruz;
+  // aksi halde iOS/Android kullanıcı etkileşimini kaybedip WhatsApp açılışını engelleyebilir.
+  if(navigator.share){
+    const canFileShare=!!(
+      files.length &&
+      navigator.canShare &&
+      navigator.canShare({files})
+    );
+
     try{
-      await navigator.share({
-        title:"Tişört Tasarımı",
-        files
-      });
+      if(canFileShare){
+        await navigator.share({
+          title:"Tişört Tasarımı",
+          text,
+          files
+        });
+        toast("Paylaşım ekranı açıldı. WhatsApp'ı seçerek görsel ve sipariş mesajını birlikte gönderebilirsin.");
+        return;
+      }
 
-      // Görsel paylaşımı tamamlandıktan sonra metni aç.
-      // Küçük gecikme WhatsApp'ın paylaşım ekranından dönmesine zaman verir.
-      setTimeout(()=>{
-        try{
-          openWhatsAppWithText(text);
-          toast("Önce tasarım görselleri, ardından sipariş mesajı gönderilecek.");
-        }catch(e){
-          toast("Görseller paylaşıldı. Sipariş mesajı için WhatsApp'ı açabilirsin.");
-        }
-      },700);
+      // Dosya paylaşımı desteklenmiyorsa en azından sipariş metnini
+      // cihazın yerel paylaşım ekranına gönder.
+      await navigator.share({
+        title:"Tişört Siparişi",
+        text
+      });
       return;
     }catch(e){
+      // Kullanıcı paylaşım ekranını kapattıysa hiçbir fallback açma.
       if(e&&e.name==="AbortError")return;
-      console.warn("Görsel paylaşımı başarısız:",e);
+      console.warn("Web Share başarısız, WhatsApp URL fallback kullanılacak:",e);
     }
   }
 
-  // Masaüstü tarayıcılar wa.me URL'sine dosya eklenmesine izin vermez.
-  // Bu nedenle dosyaları indirip kısa sipariş metnini WhatsApp'a açıyoruz.
+  // Masaüstü / Web Share desteklemeyen tarayıcılar:
+  // görselleri indir ve sipariş metnini WhatsApp Web/uygulamasına aç.
   if(files.length){
     try{
       files.forEach((file,index)=>{
         setTimeout(()=>{
           downloadBlob(file,"tisort_"+(index===0?"on":"arka")+".png");
-        },index*250);
+        },index*150);
       });
-      setTimeout(()=>{
-        try{
-          openWhatsAppWithText(text);
-          toast("Tasarım görselleri indirildi. WhatsApp açıldı; görselleri mesaja ekleyebilirsin.");
-        }catch(e){
-          toast("WhatsApp açılamadı. Görseller cihazına indirildi.");
-        }
-      },Math.max(700,files.length*350));
     }catch(e){
-      toast("Görseller indirilemedi.");
+      console.warn("Görsel indirme hatası:",e);
     }
-    return;
   }
 
   try{
     openWhatsAppWithText(text);
+    toast(files.length
+      ? "Tasarım görselleri indirildi. WhatsApp açıldı; görselleri mesaja ekleyebilirsin."
+      : "WhatsApp açıldı.");
   }catch(e){
-    toast("WhatsApp açılamadı. Tarayıcı açılır pencereyi engelliyor olabilir.");
+    console.warn("WhatsApp açma hatası:",e);
+    toast("WhatsApp açılamadı. Lütfen tekrar deneyin.");
   }
 }
 
