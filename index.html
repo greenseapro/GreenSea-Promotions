@@ -1222,33 +1222,34 @@ function openWhatsAppWithText(text){
   window.location.assign("https://wa.me/?text="+encodeURIComponent(safeText));
 }
 
-async function shareOrder(){
+function shareOrder(){
   const q=String($("qty").value||"").trim();
   const bs=String($("ordSize").value||"").trim();
   const note=String($("ordNote").value||"").trim().slice(0,300);
   if(!q||!Number.isFinite(+q)||+q<1){toast("Adet en az 1 olmalı.");return}
 
+  // Bu fonksiyon doğrudan buton tıklamasından çağrılır. Native paylaşımın
+  // kullanıcı hareketi (user activation) hakkını kaybetmemek için await/delay yok.
   const files=Array.isArray(shareFilesCache)?shareFilesCache.filter(f=>f instanceof File):[];
   const text=limitWhatsAppText(safeShareText(bs,q,note,files,files.length>0));
 
-  // WhatsApp'ın dosya+metni tek paylaşımda farklı sırada göndermesini engelliyoruz.
-  // Önce yalnızca görselleri paylaşırız; paylaşım tamamlandıktan sonra sipariş metni
-  // WhatsApp'a ayrı bir mesaj olarak açılır. Böylece sıra kesin olarak GÖRSEL -> METİN olur.
+  // KRİTİK: Görsel ve sipariş metni TEK Web Share isteğinde gönderiliyor.
+  // Önce görseli paylaş, sonra wa.me ile metni aç yaklaşımı Android'de iki ayrı
+  // paylaşım/mesaj oluşturabiliyordu. Bu nedenle ikinci bir WhatsApp yönlendirmesi yok.
   if(files.length && navigator.share && navigator.canShare){
     try{
-      if(navigator.canShare({files})){
-        await navigator.share({files});
-        window.location.assign("https://wa.me/?text="+encodeURIComponent(text));
+      if(navigator.canShare({files,text})){
+        navigator.share({files,text}).catch(e=>{
+          if(e && e.name !== "AbortError") console.warn("Görsel+metin paylaşımı başarısız:",e);
+        });
         return;
       }
     }catch(e){
-      // Kullanıcı paylaşımı iptal ettiyse yeni bir WhatsApp penceresi açmayız.
-      if(e && e.name === "AbortError") return;
-      console.warn("Görsel paylaşımı başlatılamadı:",e);
+      console.warn("Görsel+metin paylaşımı başlatılamadı:",e);
     }
   }
 
-  // Görsel paylaşımı desteklenmiyorsa yalnızca sipariş metnini aç.
+  // Dosya paylaşımı desteklenmeyen tarayıcıda güvenli geri dönüş: yalnızca metin.
   window.location.assign("https://wa.me/?text="+encodeURIComponent(text));
 }
 
