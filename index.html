@@ -1183,8 +1183,6 @@ async function loadCatalogImageForCanvas(value){
 }
 
 function safeShareText(bs,q,note,files,canFileShare){
-  // WhatsApp/wa.me URL'lerinde uzun URL'ler cihazdan cihaza farklı
-  // sınırlara takılabildiği için sipariş metnini kontrollü tutuyoruz.
   const E={
     clipboard:unicodeChar(0x1F4CB),
     shirt:unicodeChar(0x1F455),
@@ -1192,7 +1190,6 @@ function safeShareText(bs,q,note,files,canFileShare){
     art:unicodeChar(0x1F3A8),
     pin:unicodeChar(0x1F4CD),
     tag:unicodeChar(0x1F3F7)+unicodeChar(0xFE0F),
-    note:unicodeChar(0x1F4DD),
     image:unicodeChar(0x1F5BC)+unicodeChar(0xFE0F)
   };
   const lines=[
@@ -1208,11 +1205,7 @@ function safeShareText(bs,q,note,files,canFileShare){
     .map(l=>String(l.catalogCode).trim())
     .filter(Boolean))].slice(0,10);
   if(catalogCodes.length)lines.push(E.tag+" Katalog Kodu: "+catalogCodes.join(", "));
-  const cleanNote=String(note||"").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,"").trim();
-  if(cleanNote)lines.push("",E.note+" Not: "+cleanNote);
-  // Görsel paylaşımı destekleniyorsa bu metin doğrudan görselin açıklaması
-  // (caption) olarak WhatsApp'a gider. Bu yüzden ayrıca "görsel ektedir"
-  // satırı eklemiyoruz; böylece görselin altında temiz sipariş metni görünür.
+  lines.push("",E.image+" Tişört tasarım görselleri ektedir.");
   return lines.join("\n").normalize("NFC");
 }
 
@@ -1229,33 +1222,33 @@ function openWhatsAppWithText(text){
   window.location.assign("https://wa.me/?text="+encodeURIComponent(safeText));
 }
 
-function shareOrder(){
+async function shareOrder(){
   const q=String($("qty").value||"").trim();
   const bs=String($("ordSize").value||"").trim();
   const note=String($("ordNote").value||"").trim().slice(0,300);
   if(!q||!Number.isFinite(+q)||+q<1){toast("Adet en az 1 olmalı.");return}
 
-  // This function is called directly by the button click. Do not await,
-  // delay, or open a second window before invoking the native share sheet.
   const files=Array.isArray(shareFilesCache)?shareFilesCache.filter(f=>f instanceof File):[];
   const text=limitWhatsAppText(safeShareText(bs,q,note,files,files.length>0));
 
+  // WhatsApp'ın dosya+metni tek paylaşımda farklı sırada göndermesini engelliyoruz.
+  // Önce yalnızca görselleri paylaşırız; paylaşım tamamlandıktan sonra sipariş metni
+  // WhatsApp'a ayrı bir mesaj olarak açılır. Böylece sıra kesin olarak GÖRSEL -> METİN olur.
   if(files.length && navigator.share && navigator.canShare){
     try{
       if(navigator.canShare({files})){
-        // Dosyayı ve metni aynı native share isteğinde gönderiyoruz.
-        // WhatsApp bunu görsel + görselin altında açıklama (caption) olarak işler.
-        navigator.share({files,text});
+        await navigator.share({files});
+        window.location.assign("https://wa.me/?text="+encodeURIComponent(text));
         return;
       }
     }catch(e){
+      // Kullanıcı paylaşımı iptal ettiyse yeni bir WhatsApp penceresi açmayız.
+      if(e && e.name === "AbortError") return;
       console.warn("Görsel paylaşımı başlatılamadı:",e);
     }
   }
 
-  // No file share support (or no generated image): go directly to WhatsApp
-  // from this exact user gesture. There is deliberately no navigator.share({text})
-  // fallback because browsers may route that through a delayed WhatsApp handler.
+  // Görsel paylaşımı desteklenmiyorsa yalnızca sipariş metnini aç.
   window.location.assign("https://wa.me/?text="+encodeURIComponent(text));
 }
 
