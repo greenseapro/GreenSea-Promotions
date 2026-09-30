@@ -1179,6 +1179,11 @@ function limitWhatsAppText(text,maxChars=1100){
   return t.slice(0,maxChars-24).trimEnd()+"\n\n… Mesaj kısaltıldı.";
 }
 
+function whatsappUrl(text){
+  const safeText=limitWhatsAppText(text);
+  return "https://api.whatsapp.com/send?text="+encodeURIComponent(safeText);
+}
+
 function openWhatsAppWithText(text){
   const safeText=limitWhatsAppText(text);
   const encoded=encodeURIComponent(safeText);
@@ -1228,19 +1233,16 @@ async function shareOrder(){
         files
       });
 
-      // Görsel paylaşımı tamamlandıktan sonra WhatsApp mesajını aç.
-      // navigator.share() sonrasında popup açmak bazı mobil tarayıcılarda
-      // kullanıcı etkileşimi kaybolduğu için engellenebilir. Bu nedenle
-      // mesajı aynı sekmede doğrudan WhatsApp'a yönlendiriyoruz.
+      // Görsel paylaşımı tamamlandıktan sonra metni aç.
+      // Küçük gecikme WhatsApp'ın paylaşım ekranından dönmesine zaman verir.
       setTimeout(()=>{
         try{
-          const safeText=limitWhatsAppText(text);
-          const url="https://wa.me/?text="+encodeURIComponent(safeText);
-          window.location.href=url;
+          openWhatsAppWithText(text);
+          toast("Önce tasarım görselleri, ardından sipariş mesajı gönderilecek.");
         }catch(e){
-          toast("Görseller paylaşıldı. Sipariş mesajını WhatsApp'ta açabilirsin.");
+          toast("Görseller paylaşıldı. Sipariş mesajı için WhatsApp'ı açabilirsin.");
         }
-      },500);
+      },700);
       return;
     }catch(e){
       if(e&&e.name==="AbortError")return;
@@ -1288,7 +1290,7 @@ function openOrder(){
     `<input id="qty" class="field" inputmode="numeric" value="1" placeholder="Adet"></div>`+
     `<textarea id="ordNote" class="field" maxlength="300" placeholder="Not (isteğe bağlı, en fazla 300 karakter)"></textarea>`+
     `<div id="shareStatus" class="small">Tasarım görselleri hazırlanıyor...</div>`+
-    `<button id="shareBtn" class="primary green" disabled onclick="shareOrder()">GÖRSELLER HAZIRLANIYOR...</button>`
+    `<button id="shareBtn" type="button" class="primary green" disabled onclick="shareOrder()">GÖRSELLER HAZIRLANIYOR...</button>`
   );
   prepareShareFiles(token);
 }
@@ -1316,6 +1318,82 @@ async function prepareShareFiles(token){
     if(btn){btn.disabled=false;btn.textContent="WHATSAPP'TA PAYLAŞ"}
   }
 }
+function blobFile(blob,name){
+  return new File([blob],name,{type:blob?.type||"image/png",lastModified:Date.now()});
+}
+
+const canvasImageCache=new Map();
+
+function imageElementFromSource(src,crossOrigin=true){
+  return new Promise((resolve,reject)=>{
+    const im=new Image();
+    if(crossOrigin && !String(src).startsWith("data:") && !String(src).startsWith("blob:")) im.crossOrigin="anonymous";
+    im.referrerPolicy="no-referrer";
+    im.onload=()=>resolve(im);
+    im.onerror=()=>reject(new Error("Görsel yüklenemedi"));
+    im.src=src;
+  });
+}
+
+async function loadImageForCanvas(src){
+  const key=String(src||"");
+  if(!key)throw new Error("Görsel kaynağı boş.");
+  if(canvasImageCache.has(key)){
+    const cached=canvasImageCache.get(key);
+    if(cached instanceof Promise)return cached;
+    return cached;
+  }
+
+  const promise=(async()=>{
+    // Yerel/data görsellerinde doğrudan yükleme yeterlidir.
+    if(key.startsWith("data:")||key.startsWith("blob:")){
+      return await imageElementFromSource(key,false);
+    }
+
+    // Önce CORS izinli fetch deneyelim. Başarırsa canvas güvenli bir Blob URL'si
+    // üzerinden çalışır ve Google Drive gibi harici kaynaklarda taint oluşmaz.
+    try{
+      const response=await fetch(key,{mode:"cors",credentials:"omit",cache:"force-cache"});
+      if(!response.ok)throw new Error("HTTP "+response.status);
+      const blob=await response.blob();
+      const objectUrl=URL.createObjectURL(blob);
+      try{
+        return await imageElementFromSource(objectUrl,false);
+      }finally{
+        // Image yüklenmiş olsa da bazı tarayıcılar Blob URL'sini okumayı bitirene
+        // kadar kullanabilir; kısa gecikmeyle temizliyoruz.
+        setTimeout(()=>URL.revokeObjectURL(objectUrl),30000);
+      }
+    }catch(fetchError){
+      // Fetch CORS tarafından engellenirse Image + crossOrigin ile ikinci şans.
+      return await imageElementFromSource(key,true);
+    }
+  })();
+
+  canvasImageCache.set(key,promise);
+  try{
+    const im=await promise;
+    canvasImageCache.set(key,im);
+    return im;
+  }catch(e){
+    canvasImageCache.delete(key);
+    throw e;
+  }
+}
+
+async function loadCatalogImageForCanvas(value){
+  const candidates=catalogCandidates(value);
+  let lastError=null;
+  for(const src of candidates){
+    try{
+      return await loadImageForCanvas(src);
+    }catch(e){
+      lastError=e;
+    }
+  }
+  throw lastError||new Error("Katalog görseli yüklenemedi.");
+}
+
 async function renderSide(s){
  const list=layers[s];
  if(!list.length)return {has:false,blob:null};
